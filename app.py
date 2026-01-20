@@ -1,239 +1,220 @@
-# ============================================
-# STREAMLIT SALES / RETURNS ANALYTICS SYSTEM
+# =====================================================
+# SMART PRODUCTION & PROFIT ANALYTICS
+# Role: Senior Data Analyst / Data Science
+# Goal: Profit Optimization, No Loss, No Returns
 # Author: Ismoil Murotaliev
-# ============================================
+# =====================================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
+import matplotlib.pyplot as plt
 
 st.set_page_config(
-    page_title="Sales & Returns Analytics",
+    page_title="Smart Production Analytics",
     layout="wide"
 )
 
-# ============================================
-# 1. DATA LOADING
-# ============================================
+# =====================================================
+# 1. DATA UPLOAD
+# =====================================================
 
-st.sidebar.header("📂 Ma'lumot yuklash")
+st.sidebar.header("📂 Excel fayllarni yuklash")
 
-orders_file = st.sidebar.file_uploader(
-    "Buyurtmalar (zakaz.xlsx)", type=["xlsx"]
-)
-returns_file = st.sidebar.file_uploader(
-    "Qaytishlar (returns.xlsx)", type=["xlsx"]
-)
+orders_file = st.sidebar.file_uploader("Buyurtmalar (zakaz.xlsx)", type="xlsx")
+returns_file = st.sidebar.file_uploader("Qaytishlar (returns.xlsx)", type="xlsx")
 
 if not orders_file or not returns_file:
-    st.warning("Iltimos, ikkala Excel faylni yuklang")
+    st.info("Analizni boshlash uchun ikkala faylni yuklang")
     st.stop()
 
 orders = pd.read_excel(orders_file)
 returns = pd.read_excel(returns_file)
 
-# ============================================
-# 2. DATE & TIME CLEANING (MUHIM QISM)
-# ============================================
+# =====================================================
+# 2. DATE & TIME PREPARATION (XATOSIZ)
+# =====================================================
 
-orders["Период"] = pd.to_datetime(
-    orders["Период"],
-    errors="coerce",
-    dayfirst=True
-)
+for df in [orders, returns]:
+    df["Период"] = pd.to_datetime(
+        df["Период"],
+        errors="coerce",
+        dayfirst=True
+    )
+    df.dropna(subset=["Период"], inplace=True)
+    df["date"] = df["Период"].dt.date
+    df["hour"] = df["Период"].dt.hour
 
-returns["Период"] = pd.to_datetime(
-    returns["Период"],
-    errors="coerce",
-    dayfirst=True
-)
+returns_only = returns[returns["Возрат количество"].notna()]
 
-# NULL vaqtlarni olib tashlash
-orders = orders.dropna(subset=["Период"])
-returns = returns.dropna(subset=["Период"])
-
-# Kun va soat
-orders["date"] = orders["Период"].dt.date
-orders["hour"] = orders["Период"].dt.hour
-
-returns["date"] = returns["Период"].dt.date
-returns["hour"] = returns["Период"].dt.hour
-
-# ============================================
-# 3. GLOBAL FILTERLAR
-# ============================================
+# =====================================================
+# 3. GLOBAL FILTERS
+# =====================================================
 
 st.sidebar.header("⏱ Filtrlar")
 
-min_date = min(orders["date"])
-max_date = max(orders["date"])
+min_date = orders["date"].min()
+max_date = orders["date"].max()
 
 date_range = st.sidebar.date_input(
-    "Sana oralig'i",
+    "Sana oralig‘i",
     [min_date, max_date]
-)
-
-hour_range = st.sidebar.slider(
-    "Soat oralig'i",
-    0, 23, (0, 23)
 )
 
 orders_f = orders[
     (orders["date"] >= date_range[0]) &
-    (orders["date"] <= date_range[1]) &
-    (orders["hour"] >= hour_range[0]) &
-    (orders["hour"] <= hour_range[1])
+    (orders["date"] <= date_range[1])
 ]
 
-returns_f = returns[
-    (returns["date"] >= date_range[0]) &
-    (returns["date"] <= date_range[1]) &
-    (returns["hour"] >= hour_range[0]) &
-    (returns["hour"] <= hour_range[1])
+returns_f = returns_only[
+    (returns_only["date"] >= date_range[0]) &
+    (returns_only["date"] <= date_range[1])
 ]
 
-returns_only = returns_f[returns_f["Возрат количество"].notna()]
+# =====================================================
+# 4. DAILY PRODUCT PERFORMANCE (DESCRIPTIVE)
+# =====================================================
 
-# ============================================
-# 4. ANALYSIS #1 – DAILY NET RESULT
-# ============================================
+st.header("📦 Mahsulotlar bo‘yicha KUNLIK NATIJA")
 
-st.header("📅 Kunlik sof natija")
-
-daily_sales = orders_f.groupby("date").agg(
-    sales_sum=("Сумма", "sum")
-).reset_index()
-
-daily_returns = returns_only.groupby("date").agg(
-    return_sum=("Возврат сумма", "sum")
-).reset_index()
-
-daily = daily_sales.merge(
-    daily_returns, how="left", on="date"
-).fillna(0)
-
-daily["net_result"] = daily["sales_sum"] - daily["return_sum"]
-
-st.dataframe(daily)
-
-# ============================================
-# 5. ANALYSIS #2 – PRODUCT PROFITABILITY
-# ============================================
-
-st.header("📦 Mahsulotlar bo‘yicha zarar")
-
-product_returns = returns_only.groupby("Номенклатура").agg(
-    return_qty=("Возрат количество", "sum"),
-    return_sum=("Возврат сумма", "sum")
-).reset_index()
-
-product_sales = orders_f.groupby("Номенклатура").agg(
-    sales_qty=("Количество", "sum"),
-    sales_sum=("Сумма", "sum")
-).reset_index()
-
-product = product_sales.merge(
-    product_returns, how="left", on="Номенклатура"
-).fillna(0)
-
-product["return_ratio_%"] = (
-    product["return_qty"] / product["sales_qty"]
-) * 100
-
-st.dataframe(product.sort_values("return_ratio_%", ascending=False))
-
-# ============================================
-# 6. ANALYSIS #3 – STOP LIST
-# ============================================
-
-st.header("⛔ STOP-LIST mahsulotlar")
-
-stop_list = product[
-    product["return_ratio_%"] > 7
-][["Номенклатура", "return_ratio_%"]]
-
-st.dataframe(stop_list)
-
-# ============================================
-# 7. ANALYSIS #4 – CLIENT RISK
-# ============================================
-
-st.header("🏢 Kampaniyalar bo‘yicha zarar")
-
-client_returns = returns_only.groupby("Контрагент").agg(
-    return_sum=("Возврат сумма", "sum"),
-    return_count=("Возрат количество", "count")
-).reset_index()
-
-client_returns["risk"] = np.where(
-    client_returns["return_sum"] > 50000,
-    "ZARARLI", "YAXSHI"
+daily_product = (
+    orders_f
+    .groupby(["date", "Номенклатура"])
+    .agg(
+        sold_qty=("Количество", "sum"),
+        sold_sum=("Сумма", "sum")
+    )
+    .reset_index()
 )
 
-st.dataframe(client_returns.sort_values("return_sum", ascending=False))
-
-# ============================================
-# 8. ANALYSIS #5 – CLIENT × PRODUCT MATRIX
-# ============================================
-
-st.header("📊 Kampaniya × Mahsulot matritsasi")
-
-matrix = returns_only.pivot_table(
-    index="Контрагент",
-    columns="Номенклатура",
-    values="Возрат количество",
-    aggfunc="sum",
-    fill_value=0
+daily_returns = (
+    returns_f
+    .groupby(["date", "Номенклатура"])
+    .agg(
+        return_qty=("Возрат количество", "sum"),
+        return_sum=("Возврат сумма", "sum")
+    )
+    .reset_index()
 )
 
-st.dataframe(matrix)
+daily_product = daily_product.merge(
+    daily_returns,
+    on=["date", "Номенклатура"],
+    how="left"
+).fillna(0)
 
-# ============================================
-# 9. ANALYSIS #6 – HOURLY RISK
-# ============================================
+daily_product["net_result"] = (
+    daily_product["sold_sum"] - daily_product["return_sum"]
+)
 
-st.header("⏰ Soatlik qaytish xavfi")
+st.dataframe(daily_product)
 
-hourly = returns_only.groupby("hour").agg(
-    return_qty=("Возрат количество", "sum")
-).reset_index()
+# =====================================================
+# 5. PREDICTIVE: RETURN RISK PER PRODUCT
+# =====================================================
 
-fig, ax = plt.subplots()
-ax.bar(hourly["hour"], hourly["return_qty"])
-ax.set_xlabel("Soat")
-ax.set_ylabel("Qaytish miqdori")
-st.pyplot(fig)
+st.header("🔮 Ertangi qaytish RISK bashorati")
 
-# ============================================
-# 10. ANALYSIS #7 – DAILY RETURN TREND (ML)
-# ============================================
+predictions = []
 
-st.header("📈 Qaytish trend prognozi")
+for product, df_p in daily_product.groupby("Номенклатура"):
+    if len(df_p) < 3:
+        continue
 
-trend = returns_only.groupby("date").agg(
-    return_sum=("Возврат сумма", "sum")
-).reset_index()
+    df_p = df_p.sort_values("date")
+    df_p["day_index"] = range(len(df_p))
 
-trend["day_index"] = range(len(trend))
+    X = df_p[["day_index"]]
+    y = df_p["return_qty"]
 
-X = trend[["day_index"]]
-y = trend["return_sum"]
+    model = LinearRegression()
+    model.fit(X, y)
 
-model = LinearRegression()
-model.fit(X, y)
+    next_day_risk = model.predict([[df_p["day_index"].max() + 1]])[0]
 
-trend["prediction"] = model.predict(X)
+    predictions.append({
+        "Номенклатура": product,
+        "expected_return_qty": max(0, round(next_day_risk, 2))
+    })
 
-fig2, ax2 = plt.subplots()
-ax2.plot(trend["date"], trend["return_sum"], label="Real")
-ax2.plot(trend["date"], trend["prediction"], label="Trend")
-ax2.legend()
-st.pyplot(fig2)
+risk_forecast = pd.DataFrame(predictions)
 
-# ============================================
-# 11. FINAL CONCLUSION
-# ============================================
+st.dataframe(risk_forecast)
 
-st.success("Analiz yakunlandi. Qarorlarni qabul qilishga tayyor 🚀")
+# =====================================================
+# 6. PRESCRIPTIVE: SAFE PRODUCTION & SALES PLAN
+# =====================================================
+
+st.header("🛠 QANDAY QILSA ZARAR BO‘LMAYDI (REJA)")
+
+safe_plan = daily_product.merge(
+    risk_forecast,
+    on="Номенклатура",
+    how="left"
+).fillna(0)
+
+# Prescriptive formula (CORE LOGIC)
+safe_plan["recommended_production_qty"] = (
+    safe_plan["sold_qty"] -
+    (safe_plan["expected_return_qty"] * 1.5)
+).clip(lower=0)
+
+safe_plan["comment"] = np.where(
+    safe_plan["expected_return_qty"] > 0,
+    "Ishlab chiqarishni kamaytir",
+    "Xavfsiz ishlab chiqarish"
+)
+
+st.dataframe(
+    safe_plan[[
+        "date",
+        "Номенклатура",
+        "sold_qty",
+        "return_qty",
+        "expected_return_qty",
+        "recommended_production_qty",
+        "comment"
+    ]]
+)
+
+# =====================================================
+# 7. DAILY PROFIT GUARANTEE CONTROL
+# =====================================================
+
+st.header("✅ Har kun foyda bilan yopish nazorati")
+
+daily_summary = (
+    daily_product
+    .groupby("date")
+    .agg(
+        sales=("sold_sum", "sum"),
+        returns=("return_sum", "sum")
+    )
+    .reset_index()
+)
+
+daily_summary["risk_reserve"] = daily_summary["sales"] * 0.05
+
+daily_summary["safe_profit"] = (
+    daily_summary["sales"] -
+    daily_summary["returns"] -
+    daily_summary["risk_reserve"]
+)
+
+daily_summary["status"] = np.where(
+    daily_summary["safe_profit"] > 0,
+    "FOYDA ✅",
+    "REJANI O‘ZGARTIR ⚠️"
+)
+
+st.dataframe(daily_summary)
+
+# =====================================================
+# 8. MANAGEMENT CONCLUSION
+# =====================================================
+
+st.success(
+    "Bu tizim mahsulotni yomon demaydi — "
+    "qanday ishlab chiqarsa ZARAR BO‘LMASLIGINI aytadi."
+)
