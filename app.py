@@ -1,15 +1,13 @@
 # =====================================================
-# SMART PRODUCTION & PROFIT ANALYTICS
-# Role: Senior Data Analyst / Data Science
-# Goal: Profit Optimization, No Loss, No Returns
-# Author: Ismoil Murotaliev
+# SMART DAILY PRODUCTION & PROFIT ANALYTICS
+# Focus: How to avoid loss, not who is bad
+# Level: Senior Data Analyst / Data Science
 # =====================================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
-import matplotlib.pyplot as plt
 
 st.set_page_config(
     page_title="Smart Production Analytics",
@@ -22,11 +20,15 @@ st.set_page_config(
 
 st.sidebar.header("📂 Excel fayllarni yuklash")
 
-orders_file = st.sidebar.file_uploader("Buyurtmalar (zakaz.xlsx)", type="xlsx")
-returns_file = st.sidebar.file_uploader("Qaytishlar (returns.xlsx)", type="xlsx")
+orders_file = st.sidebar.file_uploader(
+    "Buyurtmalar (zakaz.xlsx)", type="xlsx"
+)
+returns_file = st.sidebar.file_uploader(
+    "Qaytishlar (returns.xlsx)", type="xlsx"
+)
 
 if not orders_file or not returns_file:
-    st.info("Analizni boshlash uchun ikkala faylni yuklang")
+    st.info("Analizni boshlash uchun ikkala Excel faylni yuklang")
     st.stop()
 
 orders = pd.read_excel(orders_file)
@@ -44,41 +46,46 @@ for df in [orders, returns]:
     )
     df.dropna(subset=["Период"], inplace=True)
     df["date"] = df["Период"].dt.date
-    df["hour"] = df["Период"].dt.hour
 
 returns_only = returns[returns["Возрат количество"].notna()]
 
 # =====================================================
-# 3. GLOBAL FILTERS
+# 3. DATE FILTER (1 KUNLIK HAM XATOSIZ)
 # =====================================================
 
-st.sidebar.header("⏱ Filtrlar")
+st.sidebar.header("⏱ Sana filtri")
 
 min_date = orders["date"].min()
 max_date = orders["date"].max()
 
 date_range = st.sidebar.date_input(
     "Sana oralig‘i",
-    [min_date, max_date]
+    value=[min_date, max_date]
 )
 
+# MUHIM: 1 kun tanlansa ham ishlaydi
+if isinstance(date_range, list) and len(date_range) == 1:
+    start_date = end_date = date_range[0]
+else:
+    start_date, end_date = date_range
+
 orders_f = orders[
-    (orders["date"] >= date_range[0]) &
-    (orders["date"] <= date_range[1])
+    (orders["date"] >= start_date) &
+    (orders["date"] <= end_date)
 ]
 
 returns_f = returns_only[
-    (returns_only["date"] >= date_range[0]) &
-    (returns_only["date"] <= date_range[1])
+    (returns_only["date"] >= start_date) &
+    (returns_only["date"] <= end_date)
 ]
 
 # =====================================================
-# 4. DAILY PRODUCT PERFORMANCE (DESCRIPTIVE)
+# 4. 1️⃣ DAILY PRODUCT RESULT (FAQAT RAQAMLAR)
 # =====================================================
 
-st.header("📦 Mahsulotlar bo‘yicha KUNLIK NATIJA")
+st.header("1️⃣ Mahsulotlar bo‘yicha KUNLIK NATIJA (Raqamlar)")
 
-daily_product = (
+daily_sales = (
     orders_f
     .groupby(["date", "Номенклатура"])
     .agg(
@@ -98,28 +105,36 @@ daily_returns = (
     .reset_index()
 )
 
-daily_product = daily_product.merge(
+daily = daily_sales.merge(
     daily_returns,
     on=["date", "Номенклатура"],
     how="left"
 ).fillna(0)
 
-daily_product["net_result"] = (
-    daily_product["sold_sum"] - daily_product["return_sum"]
+daily["net_qty"] = daily["sold_qty"] - daily["return_qty"]
+daily["net_sum"] = daily["sold_sum"] - daily["return_sum"]
+
+st.dataframe(
+    daily.rename(columns={
+        "sold_qty": "Sotilgan (dona)",
+        "return_qty": "Qaytgan (dona)",
+        "net_qty": "Sof sotilgan (dona)",
+        "sold_sum": "Sotuv summasi",
+        "return_sum": "Qaytish summasi",
+        "net_sum": "Sof tushum"
+    })
 )
 
-st.dataframe(daily_product)
-
 # =====================================================
-# 5. PREDICTIVE: RETURN RISK PER PRODUCT
+# 5. 2️⃣ TOMORROW RETURN RISK (SON BILAN)
 # =====================================================
 
-st.header("🔮 Ertangi qaytish RISK bashorati")
+st.header("2️⃣ Ertangi qaytish RISK bashorati (dona)")
 
-predictions = []
+risk_rows = []
 
-for product, df_p in daily_product.groupby("Номенклатура"):
-    if len(df_p) < 3:
+for product, df_p in daily.groupby("Номенклатура"):
+    if len(df_p) < 2:
         continue
 
     df_p = df_p.sort_values("date")
@@ -131,90 +146,91 @@ for product, df_p in daily_product.groupby("Номенклатура"):
     model = LinearRegression()
     model.fit(X, y)
 
-    next_day_risk = model.predict([[df_p["day_index"].max() + 1]])[0]
+    next_day_return = model.predict(
+        [[df_p["day_index"].max() + 1]]
+    )[0]
 
-    predictions.append({
+    risk_rows.append({
         "Номенклатура": product,
-        "expected_return_qty": max(0, round(next_day_risk, 2))
+        "Ertaga kutilayotgan qaytish (dona)": round(
+            max(0, next_day_return), 2
+        )
     })
 
-risk_forecast = pd.DataFrame(predictions)
-
+risk_forecast = pd.DataFrame(risk_rows)
 st.dataframe(risk_forecast)
 
 # =====================================================
-# 6. PRESCRIPTIVE: SAFE PRODUCTION & SALES PLAN
+# 6. 3️⃣ HOW TO AVOID LOSS (PRESCRIPTIVE PLAN)
 # =====================================================
 
-st.header("🛠 QANDAY QILSA ZARAR BO‘LMAYDI (REJA)")
+st.header("3️⃣ QANDAY QILSA ZARAR BO‘LMAYDI (REJA)")
 
-safe_plan = daily_product.merge(
+plan = daily.merge(
     risk_forecast,
     on="Номенклатура",
     how="left"
 ).fillna(0)
 
-# Prescriptive formula (CORE LOGIC)
-safe_plan["recommended_production_qty"] = (
-    safe_plan["sold_qty"] -
-    (safe_plan["expected_return_qty"] * 1.5)
+plan["Tavsiya etilgan ishlab chiqarish (dona)"] = (
+    plan["sold_qty"] -
+    (plan["Ertaga kutilayotgan qaytish (dona)"] * 1.5)
 ).clip(lower=0)
 
-safe_plan["comment"] = np.where(
-    safe_plan["expected_return_qty"] > 0,
-    "Ishlab chiqarishni kamaytir",
-    "Xavfsiz ishlab chiqarish"
-)
-
 st.dataframe(
-    safe_plan[[
+    plan[[
         "date",
         "Номенклатура",
         "sold_qty",
         "return_qty",
-        "expected_return_qty",
-        "recommended_production_qty",
-        "comment"
-    ]]
+        "Ertaga kutilayotgan qaytish (dona)",
+        "Tavsiya etilgan ishlab chiqarish (dona)"
+    ]].rename(columns={
+        "sold_qty": "Bugun sotilgan (dona)",
+        "return_qty": "Bugun qaytgan (dona)"
+    })
 )
 
 # =====================================================
-# 7. DAILY PROFIT GUARANTEE CONTROL
+# 7. 4️⃣ DAILY PROFIT GUARANTEE CONTROL
 # =====================================================
 
-st.header("✅ Har kun foyda bilan yopish nazorati")
+st.header("4️⃣ Har kun foyda bilan yopish NAZORATI")
 
-daily_summary = (
-    daily_product
+daily_profit = (
+    daily
     .groupby("date")
     .agg(
-        sales=("sold_sum", "sum"),
-        returns=("return_sum", "sum")
+        total_sales_sum=("sold_sum", "sum"),
+        total_return_sum=("return_sum", "sum")
     )
     .reset_index()
 )
 
-daily_summary["risk_reserve"] = daily_summary["sales"] * 0.05
-
-daily_summary["safe_profit"] = (
-    daily_summary["sales"] -
-    daily_summary["returns"] -
-    daily_summary["risk_reserve"]
+daily_profit["risk_reserve_5_percent"] = (
+    daily_profit["total_sales_sum"] * 0.05
 )
 
-daily_summary["status"] = np.where(
-    daily_summary["safe_profit"] > 0,
-    "FOYDA ✅",
-    "REJANI O‘ZGARTIR ⚠️"
+daily_profit["safe_profit"] = (
+    daily_profit["total_sales_sum"] -
+    daily_profit["total_return_sum"] -
+    daily_profit["risk_reserve_5_percent"]
 )
 
-st.dataframe(daily_summary)
+st.dataframe(
+    daily_profit.rename(columns={
+        "total_sales_sum": "Kunlik sotuv summasi",
+        "total_return_sum": "Kunlik qaytish summasi",
+        "risk_reserve_5_percent": "Risk rezerv (5%)",
+        "safe_profit": "Xavfsiz sof foyda"
+    })
+)
 
 # =====================================================
-# 8. MANAGEMENT CONCLUSION
+# 8. FINAL MESSAGE
 # =====================================================
 
 st.success(
-    "Bu tizim mahsulotni yomon demaydi — "
-    "qanday ishlab chiqarsa ZARAR BO‘LMASLIGINI aytadi."
+    "Bu tizim mahsulotni yomon demaydi. "
+    "U ishlab chiqarishni shunday rejalaydiki – ZARAR BO‘LMAYDI."
 )
